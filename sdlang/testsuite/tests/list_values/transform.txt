@@ -1,0 +1,1 @@
+node:colors values:["red","green","blue"]
