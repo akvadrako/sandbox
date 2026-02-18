@@ -1,0 +1,2 @@
+# Keep output comparison forgiving for trailing newlines.
+strip
