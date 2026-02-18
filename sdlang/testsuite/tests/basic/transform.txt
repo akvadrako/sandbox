@@ -1,0 +1,3 @@
+node:person
+  node:name value:"Ada"
+  node:age value:42

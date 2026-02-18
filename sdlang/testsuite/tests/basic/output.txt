@@ -1,0 +1,4 @@
+person {
+  name "Ada"
+  age 42
+}
