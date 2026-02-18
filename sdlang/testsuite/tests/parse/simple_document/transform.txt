@@ -1,2 +1,0 @@
-# Apply this transform list to both expected output and CLI stdout.
-strip

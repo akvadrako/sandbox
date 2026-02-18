@@ -1,16 +1,11 @@
 #!/usr/bin/env python3
-"""Minimal CLI-driven test runner for sdlang parse/serialize checks.
+"""Single-file case runner for sdlang parse/serialize CLI checks.
 
-Directory layout:
-  tests/
-    parse/<case_name>/{input.txt,transform.txt,output.txt}
-    serialize/<case_name>/{input.txt,transform.txt,output.txt}
-
-Use --parse-cmd and --serialize-cmd templates with {input} placeholder.
-Example:
-  python run_tests.py \\
-    --parse-cmd 'sdlang-cli parse {input}' \\
-    --serialize-cmd 'sdlang-cli serialize {input}'
+Case files live in suite/*.txt and use section headers:
+  :::: mode
+  :::: input
+  :::: transform
+  :::: output
 """
 
 from __future__ import annotations
@@ -21,25 +16,28 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List
+from typing import Iterable
 
 
 @dataclass
 class TestCase:
-    mode: str
     name: str
-    input_path: Path
-    transform_path: Path
-    output_path: Path
+    mode: str
+    input_text: str
+    transforms: list[str]
+    output_text: str
+
+
+REQUIRED_SECTIONS = ("mode", "input", "transform", "output")
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run sdlang CLI parse/serialize tests")
     parser.add_argument(
-        "--tests-dir",
-        default=Path(__file__).parent / "tests",
+        "--suite-dir",
+        default=Path(__file__).parent / "suite",
         type=Path,
-        help="Directory containing parse/ and serialize/ test cases",
+        help="Directory containing *.txt case files",
     )
     parser.add_argument(
         "--parse-cmd",
@@ -51,43 +49,53 @@ def parse_args() -> argparse.Namespace:
         default="",
         help="Command template to run serialize tests (must include {input})",
     )
-    parser.add_argument(
-        "--list",
-        action="store_true",
-        help="List discovered tests and exit",
-    )
+    parser.add_argument("--list", action="store_true", help="List discovered tests and exit")
     return parser.parse_args()
 
 
-def discover_tests(tests_dir: Path) -> list[TestCase]:
-    cases: list[TestCase] = []
-    for mode in ("parse", "serialize"):
-        mode_dir = tests_dir / mode
-        if not mode_dir.exists():
+def parse_case_file(path: Path) -> TestCase:
+    sections: dict[str, list[str]] = {}
+    current: str | None = None
+
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("::::"):
+            header = line[4:].strip().lower()
+            if header not in REQUIRED_SECTIONS:
+                raise ValueError(f"{path}: unknown section '{header}'")
+            current = header
+            sections.setdefault(current, [])
             continue
-        for case_dir in sorted(path for path in mode_dir.iterdir() if path.is_dir()):
-            case = TestCase(
-                mode=mode,
-                name=case_dir.name,
-                input_path=case_dir / "input.txt",
-                transform_path=case_dir / "transform.txt",
-                output_path=case_dir / "output.txt",
-            )
-            for required in (case.input_path, case.transform_path, case.output_path):
-                if not required.exists():
-                    raise FileNotFoundError(f"Missing required file: {required}")
-            cases.append(case)
-    return cases
+
+        if current is None:
+            if line.strip():
+                raise ValueError(f"{path}: content found before first ':::: <section>' header")
+            continue
+
+        sections[current].append(line)
+
+    missing = [name for name in REQUIRED_SECTIONS if name not in sections]
+    if missing:
+        raise ValueError(f"{path}: missing sections: {', '.join(missing)}")
+
+    mode = "\n".join(sections["mode"]).strip().lower()
+    if mode not in {"parse", "serialize"}:
+        raise ValueError(f"{path}: mode must be parse or serialize, got '{mode}'")
+
+    transforms = [ln.strip() for ln in sections["transform"] if ln.strip() and not ln.strip().startswith("#")]
+
+    return TestCase(
+        name=path.stem,
+        mode=mode,
+        input_text="\n".join(sections["input"]),
+        transforms=transforms,
+        output_text="\n".join(sections["output"]),
+    )
 
 
-def load_transforms(path: Path) -> list[str]:
-    transforms: list[str] = []
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        transforms.append(line)
-    return transforms
+def discover_tests(suite_dir: Path) -> list[TestCase]:
+    if not suite_dir.exists():
+        return []
+    return [parse_case_file(path) for path in sorted(suite_dir.glob("*.txt"))]
 
 
 def apply_transforms(value: str, transforms: Iterable[str]) -> str:
@@ -108,21 +116,29 @@ def apply_transforms(value: str, transforms: Iterable[str]) -> str:
     return result
 
 
-def run_command(template: str, input_path: Path) -> str:
+def run_command(template: str, input_text: str) -> str:
     if "{input}" not in template:
         raise ValueError("Command template must include '{input}' placeholder")
-    command = template.format(input=shlex.quote(str(input_path)))
-    completed = subprocess.run(command, shell=True, text=True, capture_output=True)
+
+    from tempfile import NamedTemporaryFile
+
+    with NamedTemporaryFile(mode="w", encoding="utf-8", suffix=".sdlang", delete=True) as fp:
+        fp.write(input_text)
+        fp.flush()
+        command = template.format(input=shlex.quote(fp.name))
+        completed = subprocess.run(command, shell=True, text=True, capture_output=True)
+
     if completed.returncode != 0:
         raise RuntimeError(
             f"Command failed ({completed.returncode}): {command}\n"
             f"stdout:\n{completed.stdout}\n"
             f"stderr:\n{completed.stderr}"
         )
+
     return completed.stdout
 
 
-def run_tests(cases: List[TestCase], parse_cmd: str, serialize_cmd: str) -> int:
+def run_tests(cases: list[TestCase], parse_cmd: str, serialize_cmd: str) -> int:
     failures = 0
     for case in cases:
         template = parse_cmd if case.mode == "parse" else serialize_cmd
@@ -130,13 +146,11 @@ def run_tests(cases: List[TestCase], parse_cmd: str, serialize_cmd: str) -> int:
             print(f"SKIP [{case.mode}] {case.name}: no command provided")
             continue
 
-        transforms = load_transforms(case.transform_path)
-        expected = apply_transforms(case.output_path.read_text(encoding="utf-8"), transforms)
+        expected = apply_transforms(case.output_text, case.transforms)
 
         try:
-            actual_raw = run_command(template, case.input_path)
-            actual = apply_transforms(actual_raw, transforms)
-        except Exception as exc:  # noqa: BLE001 - show any CLI/test error
+            actual = apply_transforms(run_command(template, case.input_text), case.transforms)
+        except Exception as exc:  # noqa: BLE001
             failures += 1
             print(f"FAIL [{case.mode}] {case.name}: {exc}")
             continue
@@ -157,7 +171,7 @@ def run_tests(cases: List[TestCase], parse_cmd: str, serialize_cmd: str) -> int:
 
 def main() -> int:
     args = parse_args()
-    cases = discover_tests(args.tests_dir)
+    cases = discover_tests(args.suite_dir)
 
     if args.list:
         for case in cases:

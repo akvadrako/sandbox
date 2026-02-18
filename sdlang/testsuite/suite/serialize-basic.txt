@@ -1,0 +1,12 @@
+:::: mode
+serialize
+:::: input
+person "Ada"
+age 42
+active true
+:::: transform
+strip
+:::: output
+person "Ada"
+age 42
+active true

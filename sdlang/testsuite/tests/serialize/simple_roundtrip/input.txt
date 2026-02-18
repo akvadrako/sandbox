@@ -1,3 +1,0 @@
-person "Ada"
-age 42
-active true

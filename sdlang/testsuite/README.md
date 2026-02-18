@@ -1,19 +1,28 @@
 # sdlang CLI testsuite
 
-This directory contains a small, file-based testsuite for exercising an sdlang CLI.
+This testsuite uses **one file per test case** under `suite/`.
 
 ## Layout
 
-Each case has three files:
+Each file (for example `suite/parse-basic.txt`) is split with `::::` headings:
 
-- `input.txt` - input passed to the CLI command.
-- `transform.txt` - normalization steps applied to both actual and expected output.
-- `output.txt` - expected CLI stdout after transforms.
+- `:::: mode` (`parse` or `serialize`)
+- `:::: input`
+- `:::: transform`
+- `:::: output`
 
-Cases are grouped by mode:
+Example:
 
-- `tests/parse/<case>/...`
-- `tests/serialize/<case>/...`
+```txt
+:::: mode
+parse
+:::: input
+person "Ada"
+:::: transform
+strip
+:::: output
+person "Ada"
+```
 
 ## Run
 
@@ -23,15 +32,13 @@ python sdlang/testsuite/run_tests.py \
   --serialize-cmd 'sdlang-cli serialize {input}'
 ```
 
-To see all discovered tests:
+List discovered tests:
 
 ```bash
 python sdlang/testsuite/run_tests.py --list
 ```
 
 ## Supported transforms
-
-One per line in `transform.txt`:
 
 - `identity`
 - `strip`
