@@ -3,9 +3,15 @@
 
 Case files live in suite/*.txt and use section headers:
   :::: mode
+
   :::: input
+
   :::: transform
+
   :::: output
+
+A typical invocation uses uv:
+  uv run sdlang/testsuite/run_tests.py --list
 """
 
 from __future__ import annotations
