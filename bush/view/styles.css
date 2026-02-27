@@ -1,0 +1,9 @@
+body { margin: 0; font-family: sans-serif; }
+main { display: grid; grid-template-columns: 280px 1fr; height: 100vh; }
+nav { border-right: 1px solid #ddd; overflow: auto; padding: 12px; }
+section { display: flex; flex-direction: column; padding: 12px; gap: 8px; }
+ul { list-style: none; padding-left: 14px; margin: 0; }
+button.file { border: 0; background: none; text-align: left; cursor: pointer; padding: 2px 0; }
+textarea { flex: 1; width: 100%; min-height: 200px; }
+.top { display: flex; gap: 8px; align-items: center; }
+.status { color: #333; font-size: 14px; }
