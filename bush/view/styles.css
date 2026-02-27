@@ -4,6 +4,9 @@ nav { border-right: 1px solid #ddd; overflow: auto; padding: 12px; }
 section { display: flex; flex-direction: column; padding: 12px; gap: 8px; }
 ul { list-style: none; padding-left: 14px; margin: 0; }
 button.file { border: 0; background: none; text-align: left; cursor: pointer; padding: 2px 0; }
-textarea { flex: 1; width: 100%; min-height: 200px; }
+button.mode, button.mode.active { border: 1px solid #ccc; padding: 4px 8px; margin-right: 6px; }
+button.mode.active { background: #eee; }
+textarea, pre#log { flex: 1; width: 100%; min-height: 200px; box-sizing: border-box; }
+pre#log { margin: 0; padding: 10px; border: 1px solid #ddd; overflow: auto; white-space: pre-wrap; }
 .top { display: flex; gap: 8px; align-items: center; }
 .status { color: #333; font-size: 14px; }

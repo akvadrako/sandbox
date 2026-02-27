@@ -1,3 +1,3 @@
 # TODO
 
-Continue implementation when internet access is available.
+Completed: internet-enabled implementation continued with log tree and log tail support.

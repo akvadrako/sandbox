@@ -28,26 +28,39 @@ class MarkdownRequestHandler(BaseHTTPRequestHandler):
             return {}
         return json.loads(raw.decode('utf-8'))
 
-    def _resolve_markdown_path(self, rel_path):
+    @classmethod
+    def _resolve_path(cls, rel_path):
         if not rel_path:
             raise ValueError('missing path')
-        path = (self.api_root / rel_path).resolve()
-        if not str(path).startswith(str(self.api_root)):
+        path = (cls.api_root / rel_path).resolve()
+        if not path.is_relative_to(cls.api_root):
             raise ValueError('invalid path')
+        return path
+
+    @classmethod
+    def _resolve_markdown_path(cls, rel_path):
+        path = cls._resolve_path(rel_path)
         if path.suffix.lower() != '.md':
             raise ValueError('only .md files are allowed')
         return path
 
-    def _build_tree(self, root):
+    @classmethod
+    def _resolve_log_path(cls, rel_path):
+        path = cls._resolve_path(rel_path)
+        if path.suffix.lower() not in {'.log', '.txt'}:
+            raise ValueError('only .log and .txt files are allowed')
+        return path
+
+    def _build_tree(self, root, suffixes):
         entries = []
         for child in sorted(root.iterdir(), key=lambda p: (p.is_file(), p.name.lower())):
             if child.name.startswith('.'):
                 continue
             if child.is_dir():
-                subtree = self._build_tree(child)
+                subtree = self._build_tree(child, suffixes)
                 if subtree:
                     entries.append({'type': 'dir', 'name': child.name, 'children': subtree})
-            elif child.suffix.lower() == '.md':
+            elif child.suffix.lower() in suffixes:
                 entries.append(
                     {
                         'type': 'file',
@@ -57,13 +70,22 @@ class MarkdownRequestHandler(BaseHTTPRequestHandler):
                 )
         return entries
 
+    def _read_log_chunk(self, path, offset, limit):
+        with path.open('rb') as fh:
+            fh.seek(offset)
+            data = fh.read(limit)
+            next_offset = fh.tell()
+        return data.decode('utf-8', errors='replace'), next_offset
+
     def do_OPTIONS(self):
         self._send_json(HTTPStatus.OK, {'ok': True})
 
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
         if parsed.path == '/api/tree':
-            return self._send_json(HTTPStatus.OK, {'root': self.api_root.name, 'items': self._build_tree(self.api_root)})
+            return self._send_json(HTTPStatus.OK, {'root': self.api_root.name, 'items': self._build_tree(self.api_root, {'.md'})})
+        if parsed.path == '/api/logs/tree':
+            return self._send_json(HTTPStatus.OK, {'root': self.api_root.name, 'items': self._build_tree(self.api_root, {'.log', '.txt'})})
         if parsed.path == '/api/file':
             params = urllib.parse.parse_qs(parsed.query)
             rel_path = params.get('path', [''])[0]
@@ -75,6 +97,32 @@ class MarkdownRequestHandler(BaseHTTPRequestHandler):
             except ValueError as exc:
                 return self._send_json(HTTPStatus.BAD_REQUEST, {'error': str(exc)})
             return self._send_json(HTTPStatus.OK, {'path': rel_path, 'content': content})
+        if parsed.path == '/api/log':
+            params = urllib.parse.parse_qs(parsed.query)
+            rel_path = params.get('path', [''])[0]
+            try:
+                offset = max(0, int(params.get('offset', ['0'])[0]))
+                limit = min(262144, max(1, int(params.get('limit', ['65536'])[0])))
+                path = self._resolve_log_path(rel_path)
+                size = path.stat().st_size
+                if offset > size:
+                    offset = size
+                content, next_offset = self._read_log_chunk(path, offset, limit)
+            except FileNotFoundError:
+                return self._send_json(HTTPStatus.NOT_FOUND, {'error': 'not found'})
+            except (ValueError, OSError) as exc:
+                return self._send_json(HTTPStatus.BAD_REQUEST, {'error': str(exc)})
+            return self._send_json(
+                HTTPStatus.OK,
+                {
+                    'path': rel_path,
+                    'offset': offset,
+                    'next_offset': next_offset,
+                    'size': size,
+                    'eof': next_offset >= size,
+                    'content': content,
+                },
+            )
         self._send_json(HTTPStatus.NOT_FOUND, {'error': 'not found'})
 
     def do_PUT(self):
@@ -129,7 +177,7 @@ def test_resolve_markdown_path_rejects_traversal(tmp_path):
     MarkdownRequestHandler.api_root = tmp_path
     handler = MarkdownRequestHandler
     try:
-        handler._resolve_markdown_path(handler, '../bad.md')
+        handler._resolve_markdown_path('../bad.md')
         assert False
     except ValueError as exc:
         assert 'invalid path' in str(exc)
@@ -188,6 +236,30 @@ def test_reject_non_markdown_put(tmp_path):
             body = json.loads(exc.read().decode('utf-8'))
             assert exc.code == 400
             assert 'only .md files' in body['error']
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_get_logs_tree_and_chunk(tmp_path):
+    logs = tmp_path / 'logs'
+    logs.mkdir()
+    log_file = logs / 'app.log'
+    log_file.write_text('first\nsecond\n', encoding='utf-8')
+    port = 8767
+    httpd, _ = _start_test_server(tmp_path, port)
+    try:
+        import urllib.request
+
+        tree_resp = urllib.request.urlopen(f'http://127.0.0.1:{port}/api/logs/tree')
+        tree = json.loads(tree_resp.read().decode('utf-8'))
+        assert tree['items'][0]['name'] == 'logs'
+
+        chunk_resp = urllib.request.urlopen(f'http://127.0.0.1:{port}/api/log?path=logs/app.log&offset=0&limit=6')
+        chunk = json.loads(chunk_resp.read().decode('utf-8'))
+        assert chunk['content'] == 'first\n'
+        assert chunk['next_offset'] == 6
+        assert chunk['eof'] is False
     finally:
         httpd.shutdown()
         httpd.server_close()
